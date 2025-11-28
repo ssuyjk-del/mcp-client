@@ -7,6 +7,21 @@ import { uploadChatImages } from '@/lib/supabase';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// 재시도 설정
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1초
+
+// 지수 백오프 딜레이 함수
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 재시도 가능한 에러인지 확인
+function isRetryableError(error: unknown): boolean {
+  const errorStr = error instanceof Error ? error.message : String(error);
+  return errorStr.includes('429') || errorStr.includes('RESOURCE_EXHAUSTED');
+}
+
 const SYSTEM_PROMPT = `
 당신은 도움이 되는 AI 어시스턴트입니다. 사용자의 질문에 명확하고 친절하게 답변하세요.
 
@@ -154,11 +169,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 이전 대화 내용을 history로 전달
-    const formattedHistory: Content[] = Array.isArray(history) ? history.map((msg: { role: string; text: string }) => ({
-      role: msg.role === 'model' ? 'model' as const : 'user' as const,
-      parts: [{ text: msg.text }]
-    })) : [];
+    // 이전 대화 내용을 history로 전달 (텍스트만 포함, functionCall/Response 제외)
+    // Gemini API는 functionResponse 형식에 민감하므로 이전 대화는 텍스트만 전달
+    const formattedHistory: Content[] = Array.isArray(history) 
+      ? history
+          .filter((msg: { role: string; text?: string }) => msg.text && msg.text.trim().length > 0)
+          .map((msg: { role: string; text: string }) => ({
+            role: msg.role === 'model' ? 'model' as const : 'user' as const,
+            parts: [{ text: msg.text }]
+          }))
+      : [];
 
     const encoder = new TextEncoder();
     
@@ -188,19 +208,41 @@ export async function POST(request: NextRequest) {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
               console.log(`[MCP Chat] Iteration ${i + 1}`);
               
-              const response = await ai.models.generateContent({
-                model,
-                contents,
-                config: {
-                  systemInstruction: SYSTEM_PROMPT_WITH_TOOLS,
-                  tools: [{ functionDeclarations }],
-                  toolConfig: {
-                    functionCallingConfig: {
-                      mode: FunctionCallingConfigMode.AUTO
+              // 재시도 로직이 포함된 API 호출
+              let response;
+              let lastError: unknown;
+              
+              for (let retry = 0; retry < MAX_RETRIES; retry++) {
+                try {
+                  response = await ai.models.generateContent({
+                    model,
+                    contents,
+                    config: {
+                      systemInstruction: SYSTEM_PROMPT_WITH_TOOLS,
+                      tools: [{ functionDeclarations }],
+                      toolConfig: {
+                        functionCallingConfig: {
+                          mode: FunctionCallingConfigMode.AUTO
+                        }
+                      }
                     }
+                  });
+                  break; // 성공하면 루프 탈출
+                } catch (error) {
+                  lastError = error;
+                  if (isRetryableError(error) && retry < MAX_RETRIES - 1) {
+                    const delay = INITIAL_RETRY_DELAY * Math.pow(2, retry);
+                    console.log(`[MCP Chat] Rate limited, retrying in ${delay}ms (attempt ${retry + 2}/${MAX_RETRIES})`);
+                    await sleep(delay);
+                  } else {
+                    throw error; // 재시도 불가능한 에러거나 재시도 횟수 초과
                   }
                 }
-              });
+              }
+              
+              if (!response) {
+                throw lastError || new Error('API 호출 실패');
+              }
               
               const candidate = response.candidates?.[0];
               if (!candidate?.content?.parts) {
@@ -375,7 +417,29 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    const stream = await chat.sendMessageStream({ message });
+    // 재시도 로직이 포함된 스트리밍 호출
+    let stream;
+    let lastStreamError: unknown;
+    
+    for (let retry = 0; retry < MAX_RETRIES; retry++) {
+      try {
+        stream = await chat.sendMessageStream({ message });
+        break;
+      } catch (error) {
+        lastStreamError = error;
+        if (isRetryableError(error) && retry < MAX_RETRIES - 1) {
+          const delay = INITIAL_RETRY_DELAY * Math.pow(2, retry);
+          console.log(`[Chat] Rate limited, retrying in ${delay}ms (attempt ${retry + 2}/${MAX_RETRIES})`);
+          await sleep(delay);
+        } else {
+          throw error;
+        }
+      }
+    }
+    
+    if (!stream) {
+      throw lastStreamError || new Error('스트리밍 시작 실패');
+    }
 
     const readableStream = new ReadableStream({
       async start(controller) {
