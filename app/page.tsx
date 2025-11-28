@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Send, Check, Copy, Plus, MessageSquare, Trash2, Menu, Loader2 } from 'lucide-react';
+import { Send, Check, Copy, Plus, MessageSquare, Trash2, Menu, Loader2, Server } from 'lucide-react';
+import Link from 'next/link';
+import { useMCP } from './context/MCPContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -419,16 +421,25 @@ export default function Home() {
       {/* 메인 컨텐츠 */}
       <div className="flex-1 flex flex-col min-w-0 relative z-10 bg-transparent">
         {/* 헤더 */}
-        <header className="border-b border-white/10 px-4 py-3 flex items-center gap-3 bg-black/20 backdrop-blur-md sticky top-0 z-10 text-zinc-100">
-          <button
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="md:hidden p-2 -ml-2 hover:bg-muted rounded-lg"
+        <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between gap-3 bg-black/20 backdrop-blur-md sticky top-0 z-10 text-zinc-100">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="md:hidden p-2 -ml-2 hover:bg-muted rounded-lg"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <h1 className="text-lg font-semibold truncate">
+              {sessions.find(s => s.id === currentSessionId)?.title || 'AI 채팅'}
+            </h1>
+          </div>
+          <Link
+            href="/mcp"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/10 rounded-lg transition-colors"
           >
-            <Menu className="w-5 h-5" />
-          </button>
-          <h1 className="text-lg font-semibold truncate">
-            {sessions.find(s => s.id === currentSessionId)?.title || 'AI 채팅'}
-          </h1>
+            <Server className="w-4 h-4" />
+            <span className="hidden sm:inline">MCP 서버</span>
+          </Link>
         </header>
 
         {/* 메시지 영역 */}
