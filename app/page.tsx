@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Send, Check, Copy, Plus, MessageSquare, Trash2, Menu, Loader2, Server } from 'lucide-react';
-import Link from 'next/link';
+import { Send, Check, Copy, Plus, MessageSquare, Trash2, Menu, Loader2, Server, Settings } from 'lucide-react';
+import MCPManagerModal from './components/MCPManagerModal';
 import { useMCP } from './context/MCPContext';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -12,6 +12,8 @@ import { cn } from '@/lib/utils';
 import SnowEffect from './components/SnowEffect';
 import ChristmasTree from './components/ChristmasTree';
 import PlayingAnimation from './components/PlayingAnimation';
+import { MCPToolToggle } from './components/MCPToolToggle';
+import { ToolCallDisplay, type ToolCallInfo } from './components/ToolCallDisplay';
 import {
   ChatSession,
   Message,
@@ -26,6 +28,15 @@ import {
 } from '@/lib/chat-storage';
 
 const FOLLOWUP_SEPARATOR = '\n---FOLLOWUP---\n';
+const TOOLCALL_START = '---TOOLCALL_START---';
+const TOOLCALL_END = '---TOOLCALL_END---';
+const IMAGES_SEPARATOR = '---IMAGES---';
+
+// Message 타입 확장
+interface ExtendedMessage extends Message {
+  toolCalls?: ToolCallInfo[];
+  images?: string[];
+}
 
 export default function Home() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -34,8 +45,25 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [enabledMcpServers, setEnabledMcpServers] = useState<string[]>([]);
+  const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallInfo[]>([]);
+  const [isToolCallLoading, setIsToolCallLoading] = useState(false);
+  const [isMCPModalOpen, setIsMCPModalOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const { serverStatuses } = useMCP();
+
+  // 연결된 서버가 변경되면 활성화된 서버 목록 업데이트
+  useEffect(() => {
+    const connectedServerIds = Object.entries(serverStatuses)
+      .filter(([, status]) => status.status === 'connected')
+      .map(([id]) => id);
+    
+    // 연결 해제된 서버는 활성화 목록에서 제거
+    setEnabledMcpServers(prev => 
+      prev.filter(id => connectedServerIds.includes(id))
+    );
+  }, [serverStatuses]);
 
   // 현재 세션의 메시지 가져오기
   const currentMessages = useMemo(() => {
@@ -163,6 +191,8 @@ export default function Home() {
     
     setInput('');
     setIsLoading(true);
+    setCurrentToolCalls([]);
+    setIsToolCallLoading(false);
 
     // DB에 사용자 메시지 저장
     try {
@@ -194,7 +224,8 @@ export default function Home() {
         body: JSON.stringify({
           message: userMessage.text,
           model: 'gemini-2.0-flash-001',
-          history: currentMessages.map(msg => ({ role: msg.role, text: msg.text }))
+          history: currentMessages.map(msg => ({ role: msg.role, text: msg.text })),
+          enabledMcpServers,
         }),
         signal: abortController.signal,
       });
@@ -211,48 +242,141 @@ export default function Home() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = '';
-      let finalMessage: Message | null = null;
+      let finalMessage: ExtendedMessage | null = null;
+      let isInToolCallSection = false;
+      let toolCallBuffer = '';
+      let parsedToolCalls: ToolCallInfo[] = [];
+      let parsedImages: string[] = [];
 
       // 스트리밍 응답 처리
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        fullText += chunk;
-
-        updateCurrentSessionLocal(session => {
-          const updatedMessages = [...session.messages];
-          const lastIndex = updatedMessages.length - 1;
+        let chunk = decoder.decode(value, { stream: true });
+        
+        // Tool call 섹션 시작 처리
+        if (chunk.includes(TOOLCALL_START)) {
+          isInToolCallSection = true;
+          setIsToolCallLoading(true);
+          const parts = chunk.split(TOOLCALL_START);
+          // TOOLCALL_START 이전 텍스트가 있으면 추가 (일반적으로 없음)
+          if (parts[0]) {
+            fullText += parts[0];
+          }
+          chunk = parts[1] || '';
+        }
+        
+        // Tool call 섹션 끝 처리
+        if (chunk.includes(TOOLCALL_END)) {
+          const parts = chunk.split(TOOLCALL_END);
+          toolCallBuffer += parts[0] || '';
           
-          // 구분자 기준으로 텍스트와 추천 질문 분리
-          const [mainText, followupJson] = fullText.split(FOLLOWUP_SEPARATOR);
-          
-          let suggestedQuestions: string[] = [];
-          if (followupJson) {
-            try {
-              suggestedQuestions = JSON.parse(followupJson);
-            } catch {
-              // JSON 파싱 중일 때는 무시
+          // Tool call JSON 파싱
+          try {
+            const lines = toolCallBuffer.trim().split('\n').filter(l => l.trim());
+            for (const line of lines) {
+              if (line.trim().startsWith('{')) {
+                const data = JSON.parse(line);
+                if (data.toolCalls) {
+                  parsedToolCalls = data.toolCalls.map((tc: ToolCallInfo) => ({
+                    ...tc,
+                    status: 'success' as const
+                  }));
+                  setCurrentToolCalls(parsedToolCalls);
+                }
+              }
             }
+          } catch (e) {
+            console.error('Tool call parsing error:', e);
           }
+          
+          isInToolCallSection = false;
+          setIsToolCallLoading(false);
+          toolCallBuffer = '';
+          
+          // TOOLCALL_END 이후의 텍스트 처리
+          chunk = parts[1] || '';
+        }
+        
+        // Tool call 섹션 내부 처리
+        if (isInToolCallSection) {
+          toolCallBuffer += chunk;
+          continue;
+        }
+        
+        // 일반 텍스트 처리
+        if (chunk) {
+          fullText += chunk;
+        }
 
-          const newMessage: Message = {
-            role: 'model',
-            text: mainText || '',
-            suggestedQuestions: suggestedQuestions.length > 0 ? suggestedQuestions : undefined
-          };
-          
-          finalMessage = newMessage;
-          
-          // 사용자 메시지 다음, 혹은 스트리밍 중인 마지막 모델 메시지 찾기
-          if (lastIndex >= 0 && updatedMessages[lastIndex].role === 'model') {
-            updatedMessages[lastIndex] = newMessage;
-          } else {
-            updatedMessages.push(newMessage);
-          }
-          return { ...session, messages: updatedMessages };
-        });
+        // 텍스트가 있으면 UI 업데이트
+        if (fullText) {
+          updateCurrentSessionLocal(session => {
+            const updatedMessages = [...session.messages];
+            const lastIndex = updatedMessages.length - 1;
+            
+            // 이미지 URL 파싱
+            let textWithoutImages = fullText;
+            if (fullText.includes(IMAGES_SEPARATOR)) {
+              const [beforeImages, afterImages] = fullText.split(IMAGES_SEPARATOR);
+              textWithoutImages = beforeImages;
+              
+              // 이미지 URL JSON 파싱
+              if (afterImages) {
+                const lines = afterImages.trim().split('\n');
+                for (const line of lines) {
+                  if (line.trim().startsWith('[')) {
+                    try {
+                      const urls = JSON.parse(line.trim());
+                      if (Array.isArray(urls)) {
+                        parsedImages = urls;
+                      }
+                    } catch {
+                      // JSON 파싱 중일 때는 무시
+                    }
+                    break;
+                  }
+                }
+                // 이미지 JSON 이후의 텍스트 추가
+                const jsonEndIndex = afterImages.indexOf(']');
+                if (jsonEndIndex !== -1) {
+                  textWithoutImages += afterImages.substring(jsonEndIndex + 1).replace(/^\n/, '');
+                }
+              }
+            }
+            
+            // 구분자 기준으로 텍스트와 추천 질문 분리
+            const [mainText, followupJson] = textWithoutImages.split(FOLLOWUP_SEPARATOR);
+            
+            let suggestedQuestions: string[] = [];
+            if (followupJson) {
+              try {
+                suggestedQuestions = JSON.parse(followupJson);
+              } catch {
+                // JSON 파싱 중일 때는 무시
+              }
+            }
+
+            const newMessage: ExtendedMessage = {
+              role: 'model',
+              text: mainText || '',
+              suggestedQuestions: suggestedQuestions.length > 0 ? suggestedQuestions : undefined,
+              toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined,
+              images: parsedImages.length > 0 ? parsedImages : undefined,
+            };
+            
+            finalMessage = newMessage;
+            
+            // 사용자 메시지 다음, 혹은 스트리밍 중인 마지막 모델 메시지 찾기
+            if (lastIndex >= 0 && updatedMessages[lastIndex].role === 'model') {
+              updatedMessages[lastIndex] = newMessage;
+            } else {
+              updatedMessages.push(newMessage);
+            }
+            return { ...session, messages: updatedMessages };
+          });
+        }
       }
 
       // 스트리밍 완료 후 DB에 모델 메시지 저장
@@ -291,6 +415,8 @@ export default function Home() {
       }
     } finally {
       setIsLoading(false);
+      setIsToolCallLoading(false);
+      setCurrentToolCalls([]);
       abortControllerRef.current = null;
     }
   };
@@ -433,13 +559,24 @@ export default function Home() {
               {sessions.find(s => s.id === currentSessionId)?.title || 'AI 채팅'}
             </h1>
           </div>
-          <Link
-            href="/mcp"
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/10 rounded-lg transition-colors"
-          >
-            <Server className="w-4 h-4" />
-            <span className="hidden sm:inline">MCP 서버</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <MCPToolToggle
+              enabledServers={enabledMcpServers}
+              onToggle={setEnabledMcpServers}
+            />
+            <button
+              onClick={() => setIsMCPModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-zinc-400 hover:text-zinc-100 hover:bg-white/10 rounded-lg transition-colors relative"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">MCP 서버</span>
+              {Object.values(serverStatuses).filter(s => s.status === 'connected').length > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                  {Object.values(serverStatuses).filter(s => s.status === 'connected').length}
+                </span>
+              )}
+            </button>
+          </div>
         </header>
 
         {/* 메시지 영역 */}
@@ -449,67 +586,114 @@ export default function Home() {
               <div className="text-center text-zinc-400 mt-12 animate-in fade-in slide-in-from-bottom-4 bg-black/40 p-6 rounded-2xl backdrop-blur-md border border-white/5">
                 <p className="text-lg mb-2 font-medium text-zinc-200">안녕하세요! 무엇을 도와드릴까요?</p>
                 <p className="text-sm">새로운 대화를 시작하거나 질문을 입력하세요.</p>
+                {enabledMcpServers.length > 0 && (
+                  <p className="text-xs text-primary mt-2">
+                    MCP 도구가 활성화되어 있습니다. AI가 필요할 때 자동으로 도구를 사용합니다.
+                  </p>
+                )}
               </div>
             ) : (
-              currentMessages.map((msg, idx) => (
-                <div
-                  key={idx}
-                  className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
-                >
+              currentMessages.map((msg, idx) => {
+                const extMsg = msg as ExtendedMessage;
+                return (
                   <div
-                    className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-sm ${
-                      msg.role === 'user'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-black/40 text-zinc-100 border border-white/10 backdrop-blur-md'
-                    }`}
+                    key={idx}
+                    className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                   >
-                    {msg.role === 'user' ? (
-                      <div className="whitespace-pre-wrap break-words">{msg.text}</div>
-                    ) : (
-                      <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            code(props) {
-                              const { children, className, node, ...rest } = props;
-                              const match = /language-(\w+)/.exec(className || '');
-                              return match ? (
-                                <CodeBlock
-                                  language={match[1]}
-                                  value={String(children).replace(/\n$/, '')}
-                                />
-                              ) : (
-                                <code {...rest} className={`${className} bg-muted px-1.5 py-0.5 rounded text-sm font-mono`}>
-                                  {children}
-                                </code>
-                              );
-                            }
-                          }}
-                        >
-                          {msg.text}
-                        </ReactMarkdown>
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-sm ${
+                        msg.role === 'user'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-black/40 text-zinc-100 border border-white/10 backdrop-blur-md'
+                      }`}
+                    >
+                      {msg.role === 'user' ? (
+                        <div className="whitespace-pre-wrap break-words">{msg.text}</div>
+                      ) : (
+                        <div>
+                          {/* Tool Calls 표시 */}
+                          {extMsg.toolCalls && extMsg.toolCalls.length > 0 && (
+                            <ToolCallDisplay toolCalls={extMsg.toolCalls} />
+                          )}
+                          
+                          {/* 이미지 표시 */}
+                          {extMsg.images && extMsg.images.length > 0 && (
+                            <div className="mb-4 grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(extMsg.images.length, 2)}, 1fr)` }}>
+                              {extMsg.images.map((imageUrl, imgIdx) => (
+                                <a 
+                                  key={imgIdx} 
+                                  href={imageUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="block overflow-hidden rounded-lg border border-zinc-700 hover:border-zinc-500 transition-colors"
+                                >
+                                  <img 
+                                    src={imageUrl} 
+                                    alt={`생성된 이미지 ${imgIdx + 1}`}
+                                    className="w-full h-auto max-h-80 object-contain bg-zinc-800"
+                                    loading="lazy"
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          )}
+                          
+                          <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                code(props) {
+                                  const { children, className, ...rest } = props;
+                                  const match = /language-(\w+)/.exec(className || '');
+                                  return match ? (
+                                    <CodeBlock
+                                      language={match[1]}
+                                      value={String(children).replace(/\n$/, '')}
+                                    />
+                                  ) : (
+                                    <code {...rest} className={`${className} bg-muted px-1.5 py-0.5 rounded text-sm font-mono`}>
+                                      {children}
+                                    </code>
+                                  );
+                                }
+                              }}
+                            >
+                              {msg.text}
+                            </ReactMarkdown>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* 후속 질문 표시 */}
+                    {msg.role === 'model' && msg.suggestedQuestions && msg.suggestedQuestions.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mt-1 animate-in fade-in slide-in-from-top-2">
+                        {msg.suggestedQuestions.map((question, qIdx) => (
+                          <button
+                            key={qIdx}
+                            onClick={() => sendMessage(question)}
+                            className="text-xs bg-background/80 hover:bg-muted text-muted-foreground hover:text-foreground border border-border rounded-full px-3 py-1.5 transition-colors backdrop-blur-sm"
+                          >
+                            {question}
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>
-                  
-                  {/* 후속 질문 표시 */}
-                  {msg.role === 'model' && msg.suggestedQuestions && msg.suggestedQuestions.length > 0 && (
-                    <div className="flex flex-wrap gap-2 mt-1 animate-in fade-in slide-in-from-top-2">
-                      {msg.suggestedQuestions.map((question, qIdx) => (
-                        <button
-                          key={qIdx}
-                          onClick={() => sendMessage(question)}
-                          className="text-xs bg-background/80 hover:bg-muted text-muted-foreground hover:text-foreground border border-border rounded-full px-3 py-1.5 transition-colors backdrop-blur-sm"
-                        >
-                          {question}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))
+                );
+              })
             )}
-            {isLoading && currentMessages[currentMessages.length - 1]?.role === 'user' && (
+            
+            {/* 현재 진행 중인 Tool Call 표시 */}
+            {isLoading && currentToolCalls.length > 0 && (
+              <div className="flex justify-start animate-in fade-in duration-300">
+                <div className="max-w-[85%] bg-black/40 rounded-2xl px-5 py-3 border border-white/10 backdrop-blur-md">
+                  <ToolCallDisplay toolCalls={currentToolCalls} isLoading={isToolCallLoading} />
+                </div>
+              </div>
+            )}
+            
+            {isLoading && currentMessages[currentMessages.length - 1]?.role === 'user' && currentToolCalls.length === 0 && (
               <div className="flex justify-start animate-in fade-in duration-300">
                 <div className="bg-muted/90 rounded-2xl px-5 py-3 backdrop-blur-sm">
                   <div className="flex gap-1">
@@ -526,23 +710,25 @@ export default function Home() {
 
         {/* 입력 영역 */}
         <div className="border-t border-white/10 px-4 py-4 bg-black/20 backdrop-blur-md">
-          <div className="max-w-3xl mx-auto flex gap-2">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder="메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
-              className="flex-1 min-h-[52px] max-h-[200px] px-4 py-3 border border-white/10 rounded-xl bg-black/40 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none shadow-sm transition-all backdrop-blur-md"
-              disabled={isLoading}
-            />
-            <button
-              onClick={() => sendMessage()}
-              disabled={!input.trim() || isLoading}
-              className="px-5 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center shadow-sm hover:shadow active:scale-95"
-              aria-label="메시지 전송"
-            >
-              <Send className="w-5 h-5" />
-            </button>
+          <div className="max-w-3xl mx-auto">
+            <div className="flex gap-2">
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyPress}
+                placeholder="메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
+                className="flex-1 min-h-[52px] max-h-[200px] px-4 py-3 border border-white/10 rounded-xl bg-black/40 text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-primary/50 resize-none shadow-sm transition-all backdrop-blur-md"
+                disabled={isLoading}
+              />
+              <button
+                onClick={() => sendMessage()}
+                disabled={!input.trim() || isLoading}
+                className="px-5 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center shadow-sm hover:shadow active:scale-95"
+                aria-label="메시지 전송"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -554,6 +740,12 @@ export default function Home() {
           />
         )}
       </div>
+
+      {/* MCP 관리 모달 */}
+      <MCPManagerModal
+        isOpen={isMCPModalOpen}
+        onClose={() => setIsMCPModalOpen(false)}
+      />
     </div>
   );
 }

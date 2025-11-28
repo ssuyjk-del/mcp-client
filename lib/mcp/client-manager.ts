@@ -215,7 +215,7 @@ class MCPClientManager {
   /**
    * 연결된 Client 인스턴스를 반환합니다.
    */
-  private getClient(serverId: string): Client {
+  getClient(serverId: string): Client {
     const instance = this.clients.get(serverId);
     
     if (!instance || instance.status !== 'connected') {
@@ -223,6 +223,21 @@ class MCPClientManager {
     }
 
     return instance.client;
+  }
+
+  /**
+   * 연결된 모든 Client 인스턴스를 반환합니다.
+   */
+  getConnectedClients(): { serverId: string; client: Client }[] {
+    const result: { serverId: string; client: Client }[] = [];
+    
+    this.clients.forEach((instance, serverId) => {
+      if (instance.status === 'connected' && instance.client) {
+        result.push({ serverId, client: instance.client });
+      }
+    });
+
+    return result;
   }
 
   /**

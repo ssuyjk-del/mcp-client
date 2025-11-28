@@ -5,6 +5,7 @@ export interface Message {
   role: 'user' | 'model';
   text: string;
   suggestedQuestions?: string[];
+  images?: string[];
 }
 
 export interface ChatSession {
@@ -29,6 +30,7 @@ function toAppSession(dbSession: DbChatSession, dbMessages: DbMessage[]): ChatSe
         role: msg.role,
         text: msg.text,
         suggestedQuestions: msg.suggested_questions ?? undefined,
+        images: msg.images ?? undefined,
       })),
   };
 }
@@ -121,6 +123,7 @@ export async function addMessage(
     role: message.role,
     text: message.text,
     suggested_questions: message.suggestedQuestions ?? null,
+    images: message.images ?? null,
     order_index: orderIndex,
   });
 
@@ -141,6 +144,7 @@ export async function updateLastMessage(
     .update({
       text: message.text,
       suggested_questions: message.suggestedQuestions ?? null,
+      images: message.images ?? null,
     })
     .eq('session_id', sessionId)
     .eq('order_index', orderIndex);
