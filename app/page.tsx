@@ -11,7 +11,6 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { cn } from '@/lib/utils';
 import SnowEffect from './components/SnowEffect';
 import ChristmasTree from './components/ChristmasTree';
-import PlayingAnimation from './components/PlayingAnimation';
 import { MCPToolToggle } from './components/MCPToolToggle';
 import { ToolCallDisplay, type ToolCallInfo } from './components/ToolCallDisplay';
 import {
@@ -491,7 +490,6 @@ export default function Home() {
     <div className="flex h-screen bg-zinc-950 overflow-hidden relative">
       <SnowEffect />
       <ChristmasTree />
-      <PlayingAnimation />
       
       {/* 사이드바 */}
       <div 
