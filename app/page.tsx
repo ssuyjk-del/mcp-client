@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Send, Check, Copy, Plus, MessageSquare, Trash2, Menu, Loader2, Server, Settings } from 'lucide-react';
+import { Send, Check, Copy, Plus, MessageSquare, Trash2, Menu, Loader2, Settings } from 'lucide-react';
 import MCPManagerModal from './components/MCPManagerModal';
 import { useMCP } from './context/MCPContext';
 import ReactMarkdown from 'react-markdown';
@@ -627,6 +627,7 @@ export default function Home() {
                                   rel="noopener noreferrer"
                                   className="block overflow-hidden rounded-lg border border-zinc-700 hover:border-zinc-500 transition-colors"
                                 >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
                                   <img 
                                     src={imageUrl} 
                                     alt={`생성된 이미지 ${imgIdx + 1}`}

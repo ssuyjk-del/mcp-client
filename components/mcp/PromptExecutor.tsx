@@ -58,7 +58,7 @@ export default function PromptExecutor({ serverId, prompts }: PromptExecutorProp
 
   return (
     <div className="space-y-3">
-      {prompts.map((prompt) => {
+      {prompts.map((prompt: MCPPrompt) => {
         const isExpanded = expandedPrompt === prompt.name;
         const isLoading = loadingPrompts.has(prompt.name);
         const result = results[prompt.name];
@@ -98,7 +98,7 @@ export default function PromptExecutor({ serverId, prompts }: PromptExecutorProp
                 {/* 입력 필드 */}
                 {prompt.arguments && prompt.arguments.length > 0 && (
                   <div className="space-y-3 mb-4">
-                    {prompt.arguments.map((arg) => (
+                    {prompt.arguments.map((arg: { name: string; description?: string; required?: boolean }) => (
                       <div key={arg.name}>
                         <label className="block text-sm text-zinc-400 mb-1">
                           {arg.name}
@@ -141,7 +141,7 @@ export default function PromptExecutor({ serverId, prompts }: PromptExecutorProp
                 )}
 
                 {/* 결과 */}
-                {result && (
+                {result !== undefined && result !== null && (
                   <div className="mt-4">
                     <h4 className="text-sm font-medium text-zinc-400 mb-2">결과</h4>
                     <pre className={cn(

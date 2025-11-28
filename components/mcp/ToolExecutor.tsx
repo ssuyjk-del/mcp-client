@@ -76,7 +76,7 @@ export default function ToolExecutor({ serverId, tools }: ToolExecutorProps) {
 
   return (
     <div className="space-y-3">
-      {tools.map((tool) => {
+      {tools.map((tool: MCPTool) => {
         const isExpanded = expandedTool === tool.name;
         const isLoading = loadingTools.has(tool.name);
         const inputFields = getInputSchema(tool);
@@ -160,7 +160,7 @@ export default function ToolExecutor({ serverId, tools }: ToolExecutorProps) {
                 )}
 
                 {/* 결과 */}
-                {result && (
+                {result !== undefined && result !== null && (
                   <div className="mt-4">
                     <h4 className="text-sm font-medium text-zinc-400 mb-2">결과</h4>
                     <pre className={cn(

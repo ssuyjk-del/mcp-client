@@ -56,7 +56,7 @@ export default function ResourceViewer({ serverId, resources }: ResourceViewerPr
 
   return (
     <div className="space-y-3">
-      {resources.map((resource) => {
+      {resources.map((resource: MCPResource) => {
         const isExpanded = expandedResource === resource.uri;
         const isLoading = loadingResources.has(resource.uri);
         const content = contents[resource.uri];
@@ -121,7 +121,7 @@ export default function ResourceViewer({ serverId, resources }: ResourceViewerPr
                 )}
 
                 {/* 콘텐츠 */}
-                {content && (
+                {content !== undefined && content !== null && (
                   <div className="mt-4">
                     <h4 className="text-sm font-medium text-zinc-400 mb-2">내용</h4>
                     <pre className={cn(

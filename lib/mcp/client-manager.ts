@@ -266,25 +266,37 @@ class MCPClientManager {
   /**
    * Tool을 실행합니다.
    */
-  async callTool(serverId: string, name: string, args?: Record<string, unknown>) {
+  async callTool(serverId: string, name: string, args?: Record<string, unknown>): Promise<{
+    content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+    isError?: boolean;
+  }> {
     const client = this.getClient(serverId);
     const result = await client.callTool({
       name,
       arguments: args || {},
     });
 
+    // MCP SDK의 content 배열을 타입 안전하게 변환
+    const content = result.content as Array<{
+      type: string;
+      text?: string;
+      data?: string;
+      mimeType?: string;
+      resource?: unknown;
+    }>;
+
     return {
-      content: result.content.map(item => {
+      content: content.map(item => {
         if (item.type === 'text') {
-          return { type: 'text', text: item.text };
+          return { type: 'text' as const, text: item.text };
         } else if (item.type === 'image') {
-          return { type: 'image', data: item.data, mimeType: item.mimeType };
+          return { type: 'image' as const, data: item.data, mimeType: item.mimeType };
         } else if (item.type === 'resource') {
-          return { type: 'resource', resource: item.resource };
+          return { type: 'resource' as const };
         }
         return { type: item.type };
       }),
-      isError: result.isError,
+      isError: (result.isError as boolean | undefined) ?? undefined,
     };
   }
 

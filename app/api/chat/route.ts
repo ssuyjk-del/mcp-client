@@ -1,5 +1,5 @@
-import { GoogleGenAI, FunctionCallingConfigMode } from '@google/genai';
-import type { Content, Part, FunctionDeclaration } from '@google/genai';
+import { GoogleGenAI, FunctionCallingConfigMode, Type } from '@google/genai';
+import type { Content, Part, FunctionDeclaration, Schema } from '@google/genai';
 import { NextRequest } from 'next/server';
 import { mcpClientManager } from '@/lib/mcp/client-manager';
 import { uploadChatImages } from '@/lib/supabase';
@@ -107,8 +107,8 @@ function mcpToolToFunctionDeclaration(tool: MCPToolSchema): FunctionDeclaration 
     name: tool.name,
     description: tool.description || '',
     parameters: tool.inputSchema ? {
-      type: tool.inputSchema.type as 'object',
-      properties: tool.inputSchema.properties || {},
+      type: Type.OBJECT,
+      properties: tool.inputSchema.properties as Record<string, Schema> || {},
       required: tool.inputSchema.required || []
     } : undefined
   };

@@ -12,7 +12,7 @@ interface MCPToolToggleProps {
 }
 
 export function MCPToolToggle({ enabledServers, onToggle }: MCPToolToggleProps) {
-  const { servers, serverStatuses, isConnected, listTools } = useMCP();
+  const { servers, isConnected, listTools } = useMCP();
   const [isOpen, setIsOpen] = useState(false);
   const [serverTools, setServerTools] = useState<Record<string, MCPTool[]>>({});
   const [loadingTools, setLoadingTools] = useState<Set<string>>(new Set());
@@ -58,6 +58,7 @@ export function MCPToolToggle({ enabledServers, onToggle }: MCPToolToggleProps) 
     if (isOpen) {
       connectedServers.forEach(server => loadServerTools(server.id));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, connectedServers.length]);
 
   const toggleServer = (serverId: string) => {
@@ -69,10 +70,6 @@ export function MCPToolToggle({ enabledServers, onToggle }: MCPToolToggleProps) 
   };
 
   const enabledCount = enabledServers.length;
-  const totalToolCount = enabledServers.reduce((sum, serverId) => {
-    return sum + (serverTools[serverId]?.length || 0);
-  }, 0);
-
   const hasConnectedServers = connectedServers.length > 0;
 
   return (
